@@ -3,6 +3,7 @@
 const EventEmitter = require('events');
 const puppeteer = require('puppeteer-core');
 const moduleRaid = require('@pedroslopez/moduleraid/moduleraid');
+const chromium = require('chrome-aws-lambda');
 
 const Util = require('./util/Util');
 const InterfaceController = require('./util/InterfaceController');
@@ -96,6 +97,7 @@ class Client extends EventEmitter {
             if(!browserArgs.find(arg => arg.includes('--user-agent'))) {
                 browserArgs.push(`--user-agent=${this.options.userAgent}`);
             }
+            puppeteerOpts.executablePath = await chromium.executablePath
 
             browser = await puppeteer.launch({...puppeteerOpts, args: browserArgs});
             page = (await browser.pages())[0];
