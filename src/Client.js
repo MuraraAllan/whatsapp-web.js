@@ -90,7 +90,12 @@ class Client extends EventEmitter {
         const puppeteerOpts = this.options.puppeteer;
         if (puppeteerOpts && puppeteerOpts.browserWSEndpoint) {
             browser = await puppeteer.connect({ ...puppeteerOpts, ignoreHTTPSErrors:true });
-            page = (await browser.pages())[0];
+            pages = (await browser.pages())
+            if (page == null || pages.length == 0) {
+                page = await browser.newPage()
+            } else {
+                page = pages[0]
+            }
         } else {
             const browserArgs = [...(puppeteerOpts.args || [])];
             if(!browserArgs.find(arg => arg.includes('--user-agent'))) {
