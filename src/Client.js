@@ -90,8 +90,8 @@ class Client extends EventEmitter {
         const puppeteerOpts = this.options.puppeteer;
         if (puppeteerOpts && puppeteerOpts.browserWSEndpoint) {
             browser = await puppeteer.connect({ ...puppeteerOpts, ignoreHTTPSErrors:true });
-            pages = (await browser.pages())
-            if (page == null || pages.length == 0) {
+            let pages = (await browser.pages())
+            if (pages == null || pages.length == 0) {
                 page = await browser.newPage()
             } else {
                 page = pages[0]
