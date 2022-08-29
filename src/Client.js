@@ -95,7 +95,9 @@ class Client extends EventEmitter {
                 page = await browser.newPage()
             } else {
                 page = pages[0]
-                skipAuth = (await page.evaluate(() => window.location.href) === 'https://web.whatsapp.com/')
+                if (await page.evaluate(() => window.location.href) == 'https://web.whatsapp.com/') 
+                console.log('CALLED >>> href', await page.evaluate(() => window.location.href) )
+                skipAuth = await page.evaluate(() => window.location.href) == 'https://web.whatsapp.com/'
             }
         } else {
             const browserArgs = [...(puppeteerOpts.args || [])];
@@ -115,12 +117,14 @@ class Client extends EventEmitter {
         this.pupPage = page;
 
         await this.authStrategy.afterBrowserInitialized();
-
-        await page.goto(WhatsWebURL, {
-            waitUntil: 'load',
-            timeout: 0,
-            referer: 'https://whatsapp.com/'
-        });
+        if (!skipAuth) {
+            await page.goto(WhatsWebURL, {
+                waitUntil: 'load',
+                timeout: 0,
+                referer: 'https://whatsapp.com/'
+            });
+        }
+        
 
         await page.evaluate(`function getElementByXpath(path) {
             return document.evaluate(path, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
@@ -167,6 +171,7 @@ class Client extends EventEmitter {
                 PROGRESS_MESSAGE: '//*[@id=\'app\']/div/div/div[3]',
             }
         );
+        console.log('should skip :', skipAuth)
         if (!skipAuth) { 
             const INTRO_IMG_SELECTOR = '[data-testid="intro-md-beta-logo-dark"], [data-testid="intro-md-beta-logo-light"], [data-asset-intro-image-light="true"], [data-asset-intro-image-dark="true"]';
             const INTRO_QRCODE_SELECTOR = 'div[data-ref] canvas';
@@ -271,16 +276,15 @@ class Client extends EventEmitter {
 
             }
         }
-
         await page.evaluate(ExposeStore, moduleRaid.toString());
+        console.log('this works 2')
         const authEventPayload = await this.authStrategy.getAuthEventPayload();
-
         /**
          * Emitted when authentication is successful
          * @event Client#authenticated
          */
         this.emit(Events.AUTHENTICATED, authEventPayload);
-
+        console.log('this work s 3')
         // Check window.Store Injection
         await page.waitForFunction('window.Store != undefined');
 
