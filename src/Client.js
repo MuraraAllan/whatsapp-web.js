@@ -86,7 +86,7 @@ class Client extends EventEmitter {
         let [browser, page] = [null, null];
 
         await this.authStrategy.beforeBrowserInitialized();
-
+        let skipAuth
         const puppeteerOpts = this.options.puppeteer;
         if (puppeteerOpts && puppeteerOpts.browserWSEndpoint) {
             browser = await puppeteer.connect({ ...puppeteerOpts, ignoreHTTPSErrors:true });
@@ -95,6 +95,7 @@ class Client extends EventEmitter {
                 page = await browser.newPage()
             } else {
                 page = pages[0]
+                skipAuth = true
             }
         } else {
             const browserArgs = [...(puppeteerOpts.args || [])];
@@ -166,108 +167,109 @@ class Client extends EventEmitter {
                 PROGRESS_MESSAGE: '//*[@id=\'app\']/div/div/div[3]',
             }
         );
+        if (!skipAuth) { 
+            const INTRO_IMG_SELECTOR = '[data-testid="intro-md-beta-logo-dark"], [data-testid="intro-md-beta-logo-light"], [data-asset-intro-image-light="true"], [data-asset-intro-image-dark="true"]';
+            const INTRO_QRCODE_SELECTOR = 'div[data-ref] canvas';
 
-        const INTRO_IMG_SELECTOR = '[data-testid="intro-md-beta-logo-dark"], [data-testid="intro-md-beta-logo-light"], [data-asset-intro-image-light="true"], [data-asset-intro-image-dark="true"]';
-        const INTRO_QRCODE_SELECTOR = 'div[data-ref] canvas';
+            // Checks which selector appears first
+            const needAuthentication = await Promise.race([
+                new Promise(resolve => {
+                    page.waitForSelector(INTRO_IMG_SELECTOR, { timeout: this.options.authTimeoutMs })
+                        .then(() => resolve(false))
+                        .catch((err) => resolve(err));
+                }),
+                new Promise(resolve => {
+                    page.waitForSelector(INTRO_QRCODE_SELECTOR, { timeout: this.options.authTimeoutMs })
+                        .then(() => resolve(true))
+                        .catch((err) => resolve(err));
+                })
+            ]);
 
-        // Checks which selector appears first
-        const needAuthentication = await Promise.race([
-            new Promise(resolve => {
-                page.waitForSelector(INTRO_IMG_SELECTOR, { timeout: this.options.authTimeoutMs })
-                    .then(() => resolve(false))
-                    .catch((err) => resolve(err));
-            }),
-            new Promise(resolve => {
-                page.waitForSelector(INTRO_QRCODE_SELECTOR, { timeout: this.options.authTimeoutMs })
-                    .then(() => resolve(true))
-                    .catch((err) => resolve(err));
-            })
-        ]);
+            // Checks if an error occurred on the first found selector. The second will be discarded and ignored by .race;
+            if (needAuthentication instanceof Error) throw needAuthentication;
 
-        // Checks if an error occurred on the first found selector. The second will be discarded and ignored by .race;
-        if (needAuthentication instanceof Error) throw needAuthentication;
-
-        // Scan-qrcode selector was found. Needs authentication
-        if (needAuthentication) {
-            const { failed, failureEventPayload, restart } = await this.authStrategy.onAuthenticationNeeded();
-            if(failed) {
-                /**
-                 * Emitted when there has been an error while trying to restore an existing session
-                 * @event Client#auth_failure
-                 * @param {string} message
-                 */
-                this.emit(Events.AUTHENTICATION_FAILURE, failureEventPayload);
-                await this.destroy();
-                if (restart) {
-                    // session restore failed so try again but without session to force new authentication
-                    return this.initialize();
-                }
-                return;
-            }
-
-            const QR_CONTAINER = 'div[data-ref]';
-            const QR_RETRY_BUTTON = 'div[data-ref] > span > button';
-            let qrRetries = 0;
-            await page.exposeFunction('qrChanged', async (qr) => {
-                /**
-                * Emitted when a QR code is received
-                * @event Client#qr
-                * @param {string} qr QR Code
-                */
-                this.emit(Events.QR_RECEIVED, qr);
-                if (this.options.qrMaxRetries > 0) {
-                    qrRetries++;
-                    if (qrRetries > this.options.qrMaxRetries) {
-                        this.emit(Events.DISCONNECTED, 'Max qrcode retries reached');
-                        await this.destroy();
+            // Scan-qrcode selector was found. Needs authentication
+            if (needAuthentication) {
+                const { failed, failureEventPayload, restart } = await this.authStrategy.onAuthenticationNeeded();
+                if(failed) {
+                    /**
+                     * Emitted when there has been an error while trying to restore an existing session
+                     * @event Client#auth_failure
+                     * @param {string} message
+                     */
+                    this.emit(Events.AUTHENTICATION_FAILURE, failureEventPayload);
+                    await this.destroy();
+                    if (restart) {
+                        // session restore failed so try again but without session to force new authentication
+                        return this.initialize();
                     }
-                }
-            });
-
-            await page.evaluate(function (selectors) {
-                const qr_container = document.querySelector(selectors.QR_CONTAINER);
-                window.qrChanged(qr_container.dataset.ref);
-
-                const obs = new MutationObserver((muts) => {
-                    muts.forEach(mut => {
-                        // Listens to qr token change
-                        if (mut.type === 'attributes' && mut.attributeName === 'data-ref') {
-                            window.qrChanged(mut.target.dataset.ref);
-                        } else
-                        // Listens to retry button, when found, click it
-                        if (mut.type === 'childList') {
-                            const retry_button = document.querySelector(selectors.QR_RETRY_BUTTON);
-                            if (retry_button) retry_button.click();
-                        }
-                    });
-                });
-                obs.observe(qr_container.parentElement, {
-                    subtree: true,
-                    childList: true,
-                    attributes: true,
-                    attributeFilter: ['data-ref'],
-                });
-            }, {
-                QR_CONTAINER,
-                QR_RETRY_BUTTON
-            });
-
-            // Wait for code scan
-            try {
-                await page.waitForSelector(INTRO_IMG_SELECTOR, { timeout: 0 });
-            } catch(error) {
-                if (
-                    error.name === 'ProtocolError' && 
-                    error.message && 
-                    error.message.match(/Target closed/)
-                ) {
-                    // something has called .destroy() while waiting
                     return;
                 }
 
-                throw error;
-            }
+                const QR_CONTAINER = 'div[data-ref]';
+                const QR_RETRY_BUTTON = 'div[data-ref] > span > button';
+                let qrRetries = 0;
+                await page.exposeFunction('qrChanged', async (qr) => {
+                    /**
+                    * Emitted when a QR code is received
+                    * @event Client#qr
+                    * @param {string} qr QR Code
+                    */
+                    this.emit(Events.QR_RECEIVED, qr);
+                    if (this.options.qrMaxRetries > 0) {
+                        qrRetries++;
+                        if (qrRetries > this.options.qrMaxRetries) {
+                            this.emit(Events.DISCONNECTED, 'Max qrcode retries reached');
+                            await this.destroy();
+                        }
+                    }
+                });
 
+                await page.evaluate(function (selectors) {
+                    const qr_container = document.querySelector(selectors.QR_CONTAINER);
+                    window.qrChanged(qr_container.dataset.ref);
+
+                    const obs = new MutationObserver((muts) => {
+                        muts.forEach(mut => {
+                            // Listens to qr token change
+                            if (mut.type === 'attributes' && mut.attributeName === 'data-ref') {
+                                window.qrChanged(mut.target.dataset.ref);
+                            } else
+                            // Listens to retry button, when found, click it
+                            if (mut.type === 'childList') {
+                                const retry_button = document.querySelector(selectors.QR_RETRY_BUTTON);
+                                if (retry_button) retry_button.click();
+                            }
+                        });
+                    });
+                    obs.observe(qr_container.parentElement, {
+                        subtree: true,
+                        childList: true,
+                        attributes: true,
+                        attributeFilter: ['data-ref'],
+                    });
+                }, {
+                    QR_CONTAINER,
+                    QR_RETRY_BUTTON
+                });
+
+                // Wait for code scan
+                try {
+                    await page.waitForSelector(INTRO_IMG_SELECTOR, { timeout: 0 });
+                } catch(error) {
+                    if (
+                        error.name === 'ProtocolError' && 
+                        error.message && 
+                        error.message.match(/Target closed/)
+                    ) {
+                        // something has called .destroy() while waiting
+                        return;
+                    }
+
+                    throw error;
+                }
+
+            }
         }
 
         await page.evaluate(ExposeStore, moduleRaid.toString());
