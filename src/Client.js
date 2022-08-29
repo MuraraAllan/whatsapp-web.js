@@ -95,7 +95,7 @@ class Client extends EventEmitter {
                 page = await browser.newPage()
             } else {
                 page = pages[0]
-                skipAuth = true
+                skipAuth = (await page.evaluate(() => window.location.href) === 'https://web.whatsapp.com/')
             }
         } else {
             const browserArgs = [...(puppeteerOpts.args || [])];
